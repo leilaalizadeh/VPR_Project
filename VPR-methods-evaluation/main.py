@@ -20,8 +20,7 @@ def main(args):
     start_time = datetime.now()
 
     logger.remove()  # Remove possibly previously existing loggers
-    #log_dir = Path("logs") / args.log_dir / start_time.strftime("%Y-%m-%d_%H-%M-%S")
-    log_dir = Path("logs") / args.log_dir #/ start_time.strftime("%Y-%m-%d_%H-%M-%S")
+    log_dir = Path("logs") / args.log_dir / start_time.strftime("%Y-%m-%d_%H-%M-%S")
     logger.add(sys.stdout, colorize=True, format="<green>{time:%Y-%m-%d %H:%M:%S}</green> {message}", level="INFO")
     logger.add(log_dir / "info.log", format="<green>{time:%Y-%m-%d %H:%M:%S}</green> {message}", level="INFO")
     logger.add(log_dir / "debug.log", level="DEBUG")
