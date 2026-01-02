@@ -74,6 +74,8 @@ def main(args):
         img0 = matcher.load_image(q_path, resize=img_size)
         for pred_path in pred_paths[:num_preds]:
             img1 = matcher.load_image(pred_path, resize=img_size)
+            if img1 is None:
+                continue
             result = matcher(deepcopy(img0), img1)
             result["all_desc0"] = result["all_desc1"] = None
             results.append(result)

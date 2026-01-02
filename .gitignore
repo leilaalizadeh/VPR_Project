@@ -177,3 +177,7 @@ cython_debug/
 data/
 logs/
 trained_models/
+image-matching-models/
+VPR-methods-evaluation/
+desktop/
+

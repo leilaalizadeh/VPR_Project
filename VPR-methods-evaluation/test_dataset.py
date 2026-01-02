@@ -4,7 +4,7 @@ from glob import glob
 import numpy as np
 import torch.utils.data as data
 import torchvision.transforms as transforms
-from PIL import Image
+from PIL import Image,UnidentifiedImageError
 from sklearn.neighbors import NearestNeighbors
 
 
@@ -43,8 +43,24 @@ def read_images_paths(dataset_folder):
         print(f"Searching test images in {dataset_folder} with glob()")
         images_paths = sorted(glob(f"{dataset_folder}/**/*", recursive=True))
         images_paths = [p for p in images_paths if os.path.isfile(p) and os.path.splitext(p)[1].lower() in [".jpg", ".jpeg", ".png"]]
+        
+        good = []
+        for p in images_paths:
+            try:
+                if os.path.getsize(p) == 0:
+                    print(f"[REMOVED 0B IMAGE] {p}")
+                    continue
+                with Image.open(p) as im:
+                    im.verify()  
+                good.append(p)
+            except (UnidentifiedImageError, OSError, ValueError) as e:
+                print(f"[REMOVED BAD IMAGE] {p} | {type(e).__name__}: {e}")
+
+        images_paths = good
+            
         if len(images_paths) == 0:
             raise FileNotFoundError(f"Directory {dataset_folder} does not contain any images")
+        
     return images_paths
 
 
@@ -108,9 +124,16 @@ class TestDataset(data.Dataset):
 
     def __getitem__(self, index):
         image_path = self.images_paths[index]
-        pil_img = Image.open(image_path).convert("RGB")
+        try:
+            with Image.open(image_path) as im:
+                pil_img = im.convert("RGB")
+        except (UnidentifiedImageError, OSError, ValueError) as e:
+            print(f"[SKIP BAD IMAGE] idx={index} path={image_path} err={type(e).__name__}: {e}")
+            return None
+
         normalized_img = self.transform(pil_img)
         return normalized_img, index
+
 
     def __len__(self):
         return len(self.images_paths)
