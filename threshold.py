@@ -6,129 +6,25 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
-
-# ----------------------------
-# 1) Loading utilities
-# ----------------------------
-
-def load_z_data(z_path: str) -> dict:
-    z = torch.load(z_path, map_location="cpu", weights_only=False)
-    if not isinstance(z, dict):
-        raise TypeError(f"Expected dict in {z_path}, got {type(z)}")
-    for k in ["predictions", "positives_per_query"]:
-        if k not in z:
-            raise KeyError(f"Missing key '{k}' in z_data. Found keys: {list(z.keys())}")
-    return z
-
-
-def natural_key(filename: str):
-    m = re.search(r"(\d+)", filename)
-    return (int(m.group(1)) if m else math.inf, filename)
-
-
-def load_matches_dir(matches_dir: str, expected_num_queries: int, ext: str = ".torch") -> list:
-   
-    files = [f for f in os.listdir(matches_dir) if f.endswith(ext)]
-    if not files:
-        raise FileNotFoundError(f"No *{ext} files found in: {matches_dir}")
-
-    idx_to_file = {}
-    for f in files:
-        m = re.search(r"(\d+)", f)
-        if not m:
-            continue
-        idx = int(m.group(1))
-        idx_to_file[idx] = f
-
-    missing = [i for i in range(expected_num_queries) if i not in idx_to_file]
-    if missing:
-        raise ValueError(f"Missing match files for query indices: {missing[:20]} (showing up to 20)")
-
-    # load in exact query order 0..expected-1
-    all_matches = []
-    for i in range(expected_num_queries):
-        path = os.path.join(matches_dir, idx_to_file[i])
-        obj = torch.load(path, map_location="cpu", weights_only=False)
-
-        if not isinstance(obj, list) or len(obj) == 0 or "num_inliers" not in obj[0]:
-            raise ValueError(f"{path} has unexpected format (need list of dicts with 'num_inliers')")
-
-        all_matches.append(obj)
-
-    extras = sorted([k for k in idx_to_file.keys() if k >= expected_num_queries])
-    if extras:
-        print(f"[INFO] Ignoring extra match files with indices >= {expected_num_queries}: {extras[:10]}{'...' if len(extras)>10 else ''}", flush=True)
-
-    return all_matches
-
-# ----------------------------
-# 2) Core metrics
-# ----------------------------
-
-def to_numpy_2d(x):
-    if isinstance(x, torch.Tensor):
-        x = x.cpu().numpy()
-    else:
-        x = np.array(x)
-    if x.ndim != 2:
-        raise ValueError(f"predictions must be 2D [num_queries, topK], got shape {x.shape}")
-    return x
-
-
-def correct_at_1(predictions_2d: np.ndarray, positives_per_query: list) -> np.ndarray:
-    n = predictions_2d.shape[0]
-    if len(positives_per_query) != n:
-        raise ValueError(f"positives_per_query length {len(positives_per_query)} != num_queries {n}")
-
-    correct = np.zeros(n, dtype=bool)
-    for q in range(n):
-        top1 = int(predictions_2d[q, 0])
-        pos = positives_per_query[q]
-        if isinstance(pos, torch.Tensor):
-            pos = pos.cpu().tolist()
-        correct[q] = top1 in set(pos)
-    #retrieval top-1 correct or not
-    return correct
-
-
-def get_inliers_top1(matches_per_query: list) -> np.ndarray:
-    n = len(matches_per_query)
-    inliers = np.zeros(n, dtype=float)
-    for q in range(n):
-        inliers[q] = float(matches_per_query[q][0]["num_inliers"])
-    return inliers
-
-
-def reranked_top1_from_inliers(predictions_2d: np.ndarray, matches_per_query: list) -> np.ndarray:
-    n, topK = predictions_2d.shape
-    reranked = np.zeros(n, dtype=int)
-
-    for q in range(n):
-        mlist = matches_per_query[q]
-        k = min(topK, len(mlist))
-        inl = np.array([float(mlist[i]["num_inliers"]) for i in range(k)], dtype=float)
-        best_i = int(np.argmax(inl))
-        reranked[q] = int(predictions_2d[q, best_i])
-    return reranked
-
-
-def recall_at_1_from_top1(top1_db_idx: np.ndarray, positives_per_query: list) -> float:
-    n = len(top1_db_idx)
-    hits = 0
-    for q in range(n):
-        pos = positives_per_query[q]
-        if isinstance(pos, torch.Tensor):
-            pos = pos.cpu().tolist()
-        if int(top1_db_idx[q]) in set(pos):
-            hits += 1
-    return hits / n
+import load_data as ld
 
 
 # ----------------------------
-# 3) Adaptive reranking
+# Adaptive reranking
 # ----------------------------
 
-# if inliers < t then rerank
+def adaptive_rerank_preds(pred_retrieval: np.ndarray, pred_reranked: np.ndarray, inliers_top1: np.ndarray, threshold: float) -> np.ndarray:
+    """
+    Adaptive policy on full list:
+      if inliers_top1 < threshold -> use reranked list
+      else -> use retrieval list
+    """
+    use_rerank = inliers_top1 < threshold
+    out = pred_retrieval.copy()
+    out[use_rerank] = pred_reranked[use_rerank]
+    return out.astype(int)
+# hard: if inliers < t then rerank
+
 def adaptive_rerank_top1(predictions_2d: np.ndarray, reranked_top1: np.ndarray, inliers_top1: np.ndarray, threshold: float) -> np.ndarray:
     top1_retrieval = predictions_2d[:, 0].astype(int)
     use_rerank = inliers_top1 < threshold
@@ -136,19 +32,23 @@ def adaptive_rerank_top1(predictions_2d: np.ndarray, reranked_top1: np.ndarray, 
     return out.astype(int)
 
 
-def sweep_thresholds(predictions_2d: np.ndarray, positives_per_query: list, reranked_top1: np.ndarray, inliers_top1: np.ndarray,thresholds: np.ndarray):
-    r1_list = []
+def sweep_thresholds(pred_retrieval: np.ndarray, pred_reranked: np.ndarray, positives_per_query: list, inliers_top1: np.ndarray, thresholds: np.ndarray):
+    r1_list, r5_list, r10_list, r20_list = [], [], [], []
     frac_list = []
 
-    # loops over many thresholds t
     for t in thresholds:
-        top1_adapt = adaptive_rerank_top1(predictions_2d, reranked_top1, inliers_top1, t)
-        r1 = recall_at_1_from_top1(top1_adapt, positives_per_query)
-        frac = float(np.mean(inliers_top1 < t))
-        r1_list.append(r1)
-        frac_list.append(frac)
+        preds_adapt = adaptive_rerank_preds(pred_retrieval, pred_reranked, inliers_top1, t)
 
-    return np.array(r1_list), np.array(frac_list)
+        r1_list.append(ld.recall_at_n(preds_adapt, positives_per_query, 1))
+        r5_list.append(ld.recall_at_n(preds_adapt, positives_per_query, 5))
+        r10_list.append(ld.recall_at_n(preds_adapt, positives_per_query, 10))
+        r20_list.append(ld.recall_at_n(preds_adapt, positives_per_query, 20))
+
+        frac_list.append(float(np.mean(inliers_top1 < t)))
+
+    return (np.array(r1_list), np.array(r5_list), np.array(r10_list), np.array(r20_list),
+            np.array(frac_list))
+
 
 
 # ----------------------------
@@ -198,11 +98,8 @@ def plot_sweep(plots_dir: str,
     #plt.show()
     save_fig(plots_dir,f"{title_prefix}_rerank_frac_vs_threshold.png")
 
-def plot_time_tradeoff(plots_dir:str,
-                       frac_reranked: np.ndarray,
-                       t_rerank: float,
-                       t_retrieval: float = 0.0,
-                       title: str = "Time per query tradeoff"):
+def plot_time_tradeoff(plots_dir:str, frac_reranked: np.ndarray, t_rerank: float, t_retrieval: float = 0.0, title: str = "Time per query tradeoff"):
+    
     T_always = t_retrieval + t_rerank
     T_adapt = t_retrieval + frac_reranked * t_rerank
     savings = 1.0 - (T_adapt / T_always)
@@ -216,18 +113,30 @@ def plot_time_tradeoff(plots_dir:str,
     
     save_fig(plots_dir,f"{title}_time_savings.png")
 
+def plot_accuracy_cost(frac_reranked, r1, title, plots_dir=None, prefix="run"):
+    import os
+    import matplotlib.pyplot as plt
+
+    plt.figure()
+    plt.plot(100*frac_reranked, 100*r1)
+    plt.xlabel("% queries reranked")
+    plt.ylabel("Adaptive R@1 (%)")
+    plt.title(title)
+
+    save_fig(plots_dir,f"{prefix}_accuracy_vs_cost.png")
+
 
 # ----------------------------
 # 5) Main runner
 # ----------------------------
 
 def run_adaptive(z_path: str, matches_dir: str, dataset_name: str, t_rerank: float, t_retrieval: float,threshold_mode: str,num_thresholds: int, fixed_threshold: float, plots_dir: str):
-    z = load_z_data(z_path)
-    predictions = to_numpy_2d(z["predictions"])
+    z = ld.load_z_data(z_path)
+    predictions = ld.to_numpy_2d(z["predictions"])
     positives = z["positives_per_query"]
 
     num_q = predictions.shape[0]
-    matches = load_matches_dir(matches_dir, expected_num_queries=num_q)
+    matches = ld.load_matches_dir(matches_dir, expected_num_queries=num_q)
 
     if len(matches) != predictions.shape[0]:
         raise ValueError(
@@ -235,29 +144,44 @@ def run_adaptive(z_path: str, matches_dir: str, dataset_name: str, t_rerank: flo
             f"Ensure matches_dir has exactly one file per query in correct order."
         )
 
-    correct = correct_at_1(predictions, positives)
-    r1_retrieval = float(np.mean(correct))
+    correct = ld.correct_at_1(predictions, positives)  # only for histogram split
+    inliers_top1 = ld.get_inliers_top1(matches)
 
-    reranked_top1 = reranked_top1_from_inliers(predictions, matches)
-    r1_reranked = recall_at_1_from_top1(reranked_top1, positives)
+    pred_retrieval = predictions.astype(int)                 # QxK
+    pred_reranked  = ld.reranked_preds_from_inliers(pred_retrieval, matches)  # QxK
 
-    inliers_top1 = get_inliers_top1(matches)
+   
+    r1_retrieval  = ld.recall_at_n(pred_retrieval, positives, 1)
+    r5_retrieval  = ld.recall_at_n(pred_retrieval, positives, 5)
+    r10_retrieval = ld.recall_at_n(pred_retrieval, positives, 10)
+    r20_retrieval = ld.recall_at_n(pred_retrieval, positives, 20)
+
+    r1_reranked  = ld.recall_at_n(pred_reranked, positives, 1)
+    r5_reranked  = ld.recall_at_n(pred_reranked, positives, 5)
+    r10_reranked = ld.recall_at_n(pred_reranked, positives, 10)
+    r20_reranked = ld.recall_at_n(pred_reranked, positives, 20)
 
     if fixed_threshold is not None:
-        top1_adapt = adaptive_rerank_top1(predictions, reranked_top1, inliers_top1, fixed_threshold)
-        r1_adapt = recall_at_1_from_top1(top1_adapt, positives)
+        preds_adapt = adaptive_rerank_preds(pred_retrieval, pred_reranked, inliers_top1, fixed_threshold)
+
+        r1_adapt  = ld.recall_at_n(preds_adapt, positives, 1)
+        r5_adapt  = ld.recall_at_n(preds_adapt, positives, 5)
+        r10_adapt = ld.recall_at_n(preds_adapt, positives, 10)
+        r20_adapt = ld.recall_at_n(preds_adapt, positives, 20)
+
         frac = float(np.mean(inliers_top1 < fixed_threshold))
 
         print("\nFixed threshold evaluation:")
         print(f"  t = {fixed_threshold:.2f}")
-        print(f"  Adaptive R@1 = {100*r1_adapt:.2f}")
-        print(f"  % reranked   = {100*frac:.1f}")
+        print(f"  Adaptive: R@1={100*r1_adapt:.2f} R@5={100*r5_adapt:.2f} R@10={100*r10_adapt:.2f} R@20={100*r20_adapt:.2f}")
+        print(f"  % reranked    = {100*frac:.1f}")
         print(f"  Estimated time/query = {t_retrieval + frac*t_rerank:.3f}s (always-rerank: {t_retrieval + t_rerank:.3f}s)")
         return
 
+
     print(f"\n[{dataset_name}]")
-    print(f"Retrieval-only R@1: {100*r1_retrieval:.2f}")
-    print(f"Always-rerank  R@1: {100*r1_reranked:.2f}")
+    print(f"Retrieval-only: R@1={100*r1_retrieval:.2f}  R@5={100*r5_retrieval:.2f}  R@10={100*r10_retrieval:.2f}  R@20={100*r20_retrieval:.2f}")
+    print(f"Always-rerank:  R@1={100*r1_reranked:.2f}  R@5={100*r5_reranked:.2f}  R@10={100*r10_reranked:.2f}  R@20={100*r20_reranked:.2f}")
     print(f"Inliers(top1): min={inliers_top1.min():.1f}, median={np.median(inliers_top1):.1f}, max={inliers_top1.max():.1f}")
 
     plot_inliers_hist(plots_dir,inliers_top1, correct, title=f"{dataset_name}: inliers(top1) correct vs wrong")
@@ -273,22 +197,28 @@ def run_adaptive(z_path: str, matches_dir: str, dataset_name: str, t_rerank: flo
     else:
         raise ValueError("threshold_mode must be one of: quantiles, range")
 
-    r1_adapt, frac_reranked = sweep_thresholds(predictions, positives, reranked_top1, inliers_top1, thresholds)
-
+    
+    r1_adapt, r5_adapt, r10_adapt, r20_adapt, frac_reranked = sweep_thresholds(pred_retrieval, pred_reranked, positives, inliers_top1, thresholds)
+    
     plot_sweep(plots_dir,thresholds, r1_adapt, frac_reranked, title_prefix=dataset_name)
-    plot_time_tradeoff(plots_dir,frac_reranked, t_rerank=t_rerank, t_retrieval=t_retrieval, 
-                       title=f"{dataset_name}: time savings (t_rerank={t_rerank}s)")
+    plot_accuracy_cost(frac_reranked, r1_adapt, f"{dataset_name} — Accuracy–cost trade-off", plots_dir=plots_dir, prefix=dataset_name)
 
-    best_idx = int(np.argmax(r1_adapt))
+    best_r1 = np.max(r1_adapt)
+    cands = np.where(np.isclose(r1_adapt, best_r1, atol=1e-12))[0]
+    best_idx = int(cands[np.argmin(frac_reranked[cands])])
+
+   
     best_t = float(thresholds[best_idx])
     best_r1 = float(r1_adapt[best_idx])
     best_frac = float(frac_reranked[best_idx])
-
+    
+   
     print("\nBest threshold (max R@1):")
     print(f"  t = {best_t:.2f}")
-    print(f"  Adaptive R@1 = {100*best_r1:.2f}")
-    print(f"  % reranked   = {100*best_frac:.1f}")
+    print(f"  Adaptive: R@1={100*r1_adapt[best_idx]:.2f} R@5={100*r5_adapt[best_idx]:.2f} @10={100*r10_adapt[best_idx]:.2f} R@20={100*r20_adapt[best_idx]:.2f}")
+    print(f"  % reranked    = {100*best_frac:.1f}")
     print(f"  Estimated time/query = {t_retrieval + best_frac*t_rerank:.3f}s (always-rerank: {t_retrieval + t_rerank:.3f}s)")
+
 
 
 def build_arg_parser():
