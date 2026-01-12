@@ -27,7 +27,7 @@ def build_features_and_data(z_path: str, matches_dir: str):
     Q = predictions.shape[0]
     matches = ld.load_matches_dir(matches_dir, expected_num_queries=Q)
 
-    # label: is retrieval top-1 wrong?
+    # is retrieval top-1 wrong?
     correct = ld.correct_at_1(predictions, positives)
     y = (~correct).astype(int)  # 1 = wrong, 0 = correct
 
