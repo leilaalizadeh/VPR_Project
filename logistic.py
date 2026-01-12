@@ -38,10 +38,7 @@ def build_features_and_data(z_path: str, matches_dir: str):
     d1 = distances[:, 0]
     d2 = distances[:, 1]
     margin = (d2 - d1).astype(float)
-    #print("margin",margin)
-    #print("distances",distances)
-    #print("d1",d1)
-    #print("d2",d2)
+ 
     X = np.stack([inliers_top1, margin], axis=1)
 
     # retrieval list
