@@ -15,7 +15,6 @@ import load_data as ld
 
 def adaptive_rerank_preds(pred_retrieval: np.ndarray, pred_reranked: np.ndarray, inliers_top1: np.ndarray, threshold: float) -> np.ndarray:
     """
-    Adaptive policy on full list:
       if inliers_top1 < threshold -> use reranked list
       else -> use retrieval list
     """
