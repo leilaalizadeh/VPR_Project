@@ -51,7 +51,7 @@ def load_matches_dir(matches_dir: str, expected_num_queries: int, ext: str = ".t
 
     extras = sorted([k for k in idx_to_file.keys() if k >= expected_num_queries])
     if extras:
-        print(f"[INFO] Ignoring extra match files with indices >= {expected_num_queries}: {extras[:10]}{'...' if len(extras)>10 else ''}", flush=True)
+        print(f"Ignoring extra match files with indices >= {expected_num_queries}: {extras[:10]}{'...' if len(extras)>10 else ''}", flush=True)
 
     return all_matches
 

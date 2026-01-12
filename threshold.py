@@ -144,11 +144,11 @@ def run_adaptive(z_path: str, matches_dir: str, dataset_name: str, t_rerank: flo
             f"Ensure matches_dir has exactly one file per query in correct order."
         )
 
-    correct = ld.correct_at_1(predictions, positives)  # only for histogram split
+    correct = ld.correct_at_1(predictions, positives)  
     inliers_top1 = ld.get_inliers_top1(matches)
 
-    pred_retrieval = predictions.astype(int)                 # QxK
-    pred_reranked  = ld.reranked_preds_from_inliers(pred_retrieval, matches)  # QxK
+    pred_retrieval = predictions.astype(int)                 
+    pred_reranked  = ld.reranked_preds_from_inliers(pred_retrieval, matches)  
 
    
     r1_retrieval  = ld.recall_at_n(pred_retrieval, positives, 1)
@@ -186,7 +186,7 @@ def run_adaptive(z_path: str, matches_dir: str, dataset_name: str, t_rerank: flo
 
     plot_inliers_hist(plots_dir,inliers_top1, correct, title=f"{dataset_name}: inliers(top1) correct vs wrong")
 
-    # threshold grid
+    
     if threshold_mode == "quantiles":
         qs = np.linspace(0.0, 1.0, num_thresholds)
         thresholds = np.unique(np.quantile(inliers_top1, qs))
@@ -227,11 +227,10 @@ def build_arg_parser():
     p.add_argument("--matches_dir", type=str, required=True, help="Folder containing per-query match .torch files")
     p.add_argument("--dataset_name", type=str, default="Dataset")
 
-    p.add_argument("--t_rerank", type=float, required=True, help="Reranking time per query for the matching model (seconds).")
-    p.add_argument("--t_retrieval", type=float, default=0.0, help="Optional retrieval-only time per query (seconds).")
+    p.add_argument("--t_rerank", type=float, required=True, help="Reranking time per query for the matching model.")
+    p.add_argument("--t_retrieval", type=float, default=0.0, help="Optional retrieval-only time per query.")
 
-    p.add_argument("--threshold_mode", type=str, choices=["quantiles", "range"], default="quantiles",
-                   help="How to create thresholds: quantiles or range.")
+    p.add_argument("--threshold_mode", type=str, choices=["quantiles", "range"], default="quantiles", help="How to create thresholds: quantiles or range.")
     p.add_argument("--num_thresholds", type=int, default=41, help="Number of thresholds to sweep (default 41).")
     p.add_argument("--fixed_threshold", type=float, default=None, help="If set, skip sweep and evaluate adaptive rerank using this threshold.")
     p.add_argument("--plots_dir", type=str, default=None, help="If set, save plots as PNGs into this folder.")

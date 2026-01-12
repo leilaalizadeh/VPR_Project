@@ -19,7 +19,7 @@ import load_data as ld
 def build_features_and_data(z_path: str, matches_dir: str):
     z = ld.load_z_data(z_path)
 
-    predictions = ld.to_numpy_2d(z["predictions"]).astype(int)  # QxK
+    predictions = ld.to_numpy_2d(z["predictions"]).astype(int) 
     positives = z["positives_per_query"]
 
     distances = ld.to_numpy_2d(z["distances"]).astype(float)
@@ -90,7 +90,7 @@ def choose_best_tradeoff(cutoffs: np.ndarray, r1: np.ndarray, frac: np.ndarray, 
     if not np.any(ok):
         idx = int(np.argmax(r1))
         return cutoffs[idx], r1[idx], frac[idx]
-    # among OK, pick minimal rerank fraction
+    # pick minimal rerank fraction
     idx = int(np.argmin(frac[ok]))
     return cutoffs[ok][idx], r1[ok][idx], frac[ok][idx]
 
@@ -153,7 +153,7 @@ def plot_pr_curve(y_true, scores, title_prefix, plots_dir=None):
     y_true: 1 if wrong, 0 if correct
     scores: p_wrong (higher => more uncertain)
     """
-    ap = average_precision_score(y_true, scores)  # this is AUPRC (Average Precision)
+    ap = average_precision_score(y_true, scores)  
     precision, recall, _ = precision_recall_curve(y_true, scores)
 
     plt.figure()
@@ -284,7 +284,7 @@ def main(args):
 def build_arg_parser():
     p = argparse.ArgumentParser("Logistic adaptive reranking (inliers_top1 + distance margin) with Recall@K reporting")
 
-    p.add_argument("--name", type=str, default="Run", help="Label for printing/plots (e.g., NetVLAD+LoFTR)")
+    p.add_argument("--name", type=str, default="Run", help="Label for printing/plots")
 
     p.add_argument("--train_z_path", type=str, required=True)
     p.add_argument("--train_matches_dir", type=str, required=True)
